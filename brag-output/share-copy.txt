@@ -1,0 +1,6 @@
+Microservices rarely die from a single bug; they crash from cascading retry storms and dependency timeouts.
+
+CascadeGuard models dependency drag in real time to predict cascading failures across an 8-service topology, pin the single root cause, and automate the optimal recovery before total system collapse.
+
+Built for Orcathon — Track 01: Software & AI. 100% in-browser, simulated telemetry, ₹0 cloud cost.
+https://github.com/manthansingh26/CascadeGuard
