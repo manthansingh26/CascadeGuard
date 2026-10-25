@@ -4,34 +4,34 @@
 /**
  * Calculates deterministic risk score (0-100) for a service.
  * Formula:
- * Own Risk = (Error Rate * 0.45) + (Normalized Latency * 0.35) + (CPU * 0.15)
- * Dependency Drag = (Max Dep Risk * 0.35) + (Avg Dep Risk * 0.15)
- * Total = min(100, round(Own Risk * 0.65 + Dependency Drag * 0.35))
+ * Direct Stress (0-100 pts) = Error Score (0-45) + Latency Score (0-35) + CPU Score (0-20)
+ * Dependency Drag (0-100 pts) = Max Downstream Dep Risk * 0.70 + Avg Downstream Dep Risk * 0.30
+ * Total Risk % = min(100, round(Direct Stress * 0.70 + Dependency Drag * 0.30))
  */
 export function calculateServiceRisk(service, servicesMap) {
   // Direct error rate impact (0 - 45 pts)
-  const errorScore = Math.min((service.errorRate || 0) * 0.5, 45);
+  const errorScore = Math.min(45, (service.errorRate || 0) * 0.50);
 
   // Latency impact normalized against SLA (0 - 35 pts)
   const sla = service.slaLatencyMs || 150;
-  const latencyScore = Math.min(((service.latency || 0) / sla) * 18, 35);
+  const latencyScore = Math.min(35, ((service.latency || 0) / sla) * 17.5);
 
   // CPU saturation impact (0 - 20 pts)
-  const cpuScore = Math.min(((service.cpu || 0) / 100) * 20, 20);
+  const cpuScore = Math.min(20, ((service.cpu || 0) / 100) * 20);
 
-  const ownRisk = errorScore + latencyScore + cpuScore;
+  const directStress = errorScore + latencyScore + cpuScore;
 
-  // Propagated drag from downstream dependencies
-  let depDrag = 0;
+  // Propagated drag from downstream dependencies (normalized to 0 - 100 pts)
+  let dependencyDrag = 0;
   const deps = service.dependsOn || [];
-  if (deps.length > 0) {
+  if (deps.length > 0 && servicesMap) {
     const depRisks = deps.map(depId => servicesMap[depId]?.risk || 0);
     const maxDep = Math.max(...depRisks, 0);
     const avgDep = depRisks.reduce((acc, curr) => acc + curr, 0) / depRisks.length;
-    depDrag = (maxDep * 0.35) + (avgDep * 0.15);
+    dependencyDrag = (maxDep * 0.70) + (avgDep * 0.30);
   }
 
-  const combined = Math.round(ownRisk * 0.65 + depDrag * 0.35);
+  const combined = Math.round(directStress * 0.70 + dependencyDrag * 0.30);
   return Math.min(100, Math.max(0, combined));
 }
 
@@ -102,6 +102,7 @@ export function propagateCascadeTick(currentServices, rootCauseId, _tickCount) {
   // Recalculate remaining services' risk
   return currentServices.map(s => {
     const updated = servicesMap[s.id];
+    updated.isRootCause = s.id === rootCauseId;
     updated.risk = calculateServiceRisk(updated, servicesMap);
     updated.status = determineStatus(updated.risk);
     return updated;
@@ -192,7 +193,8 @@ export function generateLogEntries(services, rootCauseId, isRecovering) {
   }
 
   services.forEach(s => {
-    if (s.isRootCause) {
+    const isActualRoot = Boolean(rootCauseId && s.id === rootCauseId);
+    if (isActualRoot) {
       logs.push({
         id: Math.random().toString(36).slice(2, 9),
         timestamp: timeStr,
@@ -206,7 +208,7 @@ export function generateLogEntries(services, rootCauseId, isRecovering) {
         timestamp: timeStr,
         service: s.shortName,
         level: 'CRIT',
-        message: `Cascading timeout: ${s.latency}ms > SLA ${s.slaLatencyMs}ms (err=${s.errorRate}%). Thread pool starved.`,
+        message: `[CASCADE] Cascading timeout: ${s.latency}ms > SLA ${s.slaLatencyMs}ms (err=${s.errorRate}%). Thread pool starved.`,
       });
     } else if (s.status === 'at-risk') {
       logs.push({
@@ -214,7 +216,7 @@ export function generateLogEntries(services, rootCauseId, isRecovering) {
         timestamp: timeStr,
         service: s.shortName,
         level: 'WARN',
-        message: `Upstream drag detected: latency elevated to ${s.latency}ms, error rate rising (${s.errorRate}%).`,
+        message: `[AFFECTED] Upstream drag detected: latency elevated to ${s.latency}ms, error rate rising (${s.errorRate}%).`,
       });
     } else {
       // Occasional healthy log (keep feed informative without flooding)

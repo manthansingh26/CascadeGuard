@@ -62,14 +62,21 @@ export function App() {
   // Recovery state
   const [isRecovering, setIsRecovering] = useState(false);
   const [activeRecoveryStrategy, setActiveRecoveryStrategy] = useState(null);
+  const [savedCountAtRecovery, setSavedCountAtRecovery] = useState(0);
   const [postMortem, setPostMortem] = useState(null);
 
   // Modals & Inspection
   const [isFormulaOpen, setIsFormulaOpen] = useState(false);
   const [isDemoOpen, setIsDemoOpen] = useState(false);
   const [selectedServiceId, setSelectedServiceId] = useState(null);
+  const [logFilter, setLogFilter] = useState('ALL');
 
-  // Logs stream
+  // Auto Demo (60s) State
+  const [autoDemoState, setAutoDemoState] = useState(null);
+  const [demoToast, setDemoToast] = useState(null);
+  const autoDemoTimeoutsRef = useRef([]);
+
+  // Logs stream (capped at 200)
   const [logs, setLogs] = useState(() => [
     {
       id: 'init-1',
@@ -95,6 +102,7 @@ export function App() {
   ]);
 
   const hasActiveIncident = Boolean(rootCauseId || activeScenarioId);
+  const blastRadius = services.filter(s => s.risk >= 35).length;
 
   // Ref to hold latest state for simulation ticks
   const stateRef = useRef({
@@ -103,6 +111,7 @@ export function App() {
     activeScenarioId,
     isRecovering,
     activeRecoveryStrategy,
+    savedCountAtRecovery,
     timeToCrashSec,
     incidentStartTime,
     cascadeSteps,
@@ -116,12 +125,13 @@ export function App() {
       activeScenarioId,
       isRecovering,
       activeRecoveryStrategy,
+      savedCountAtRecovery,
       timeToCrashSec,
       incidentStartTime,
       cascadeSteps,
       tickCount,
     };
-  }, [services, rootCauseId, activeScenarioId, isRecovering, activeRecoveryStrategy, timeToCrashSec, incidentStartTime, cascadeSteps, tickCount]);
+  }, [services, rootCauseId, activeScenarioId, isRecovering, activeRecoveryStrategy, savedCountAtRecovery, timeToCrashSec, incidentStartTime, cascadeSteps, tickCount]);
 
   // Inject failure scenario
   const handleTriggerScenario = useCallback((scenarioKey) => {
@@ -141,7 +151,10 @@ export function App() {
 
     setServices(prev => {
       const map = {};
-      prev.forEach(s => { map[s.id] = { ...s }; });
+      // Ensure ONLY rootId has isRootCause = true
+      prev.forEach(s => {
+        map[s.id] = { ...s, isRootCause: s.id === rootId };
+      });
 
       const target = map[rootId];
       if (target) {
@@ -149,7 +162,6 @@ export function App() {
         target.latency = impact.latency || 2800;
         target.errorRate = impact.errorRate || 85;
         target.cpu = impact.cpu || 95;
-        target.isRootCause = true;
         target.risk = calculateServiceRisk(target, map);
         target.status = 'failing';
       }
@@ -168,9 +180,9 @@ export function App() {
       },
     ]);
 
-    // Append log
+    // Append log (capped at 200 items)
     setLogs(prev => [
-      ...prev.slice(-150),
+      ...prev.slice(-190),
       {
         id: Math.random().toString(36).slice(2, 9),
         timestamp: timeStr + '.00',
@@ -178,7 +190,7 @@ export function App() {
         level: 'CRIT',
         message: `Scenario '${scenario.title}' injected! Root cause: ${rootId.toUpperCase()}.`,
       },
-    ]);
+    ].slice(-200));
   }, []);
 
   // Inject manual failure into any single service
@@ -198,14 +210,16 @@ export function App() {
 
     setServices(prev => {
       const map = {};
-      prev.forEach(item => { map[item.id] = { ...item }; });
+      // Enforce single root cause strictly
+      prev.forEach(item => {
+        map[item.id] = { ...item, isRootCause: item.id === serviceId };
+      });
 
       const target = map[serviceId];
       if (target) {
         target.latency = Math.max(2500, target.slaLatencyMs * 8);
         target.errorRate = 92;
         target.cpu = 96;
-        target.isRootCause = true;
         target.risk = calculateServiceRisk(target, map);
         target.status = 'failing';
       }
@@ -224,21 +238,25 @@ export function App() {
     ]);
 
     setLogs(prev => [
-      ...prev.slice(-150),
+      ...prev.slice(-190),
       {
         id: Math.random().toString(36).slice(2, 9),
         timestamp: timeStr + '.00',
         service: s.shortName,
         level: 'CRIT',
-        message: `[MANUAL CHAOS] Injected catastrophic outage into ${s.name}.`,
+        message: `[ROOT CAUSE] Injected catastrophic outage into ${s.name}.`,
       },
-    ]);
+    ].slice(-200));
   }, [services]);
 
   // Apply Recovery Action
   const handleApplyRecovery = useCallback((strategy) => {
     setIsRecovering(true);
     setActiveRecoveryStrategy(strategy);
+
+    // Save exact blast radius count at the moment Apply Recovery is clicked
+    const affectedAtMoment = stateRef.current.services.filter(s => s.risk >= 35).length || 1;
+    setSavedCountAtRecovery(affectedAtMoment);
 
     const now = new Date();
     const timeStr = now.toTimeString().split(' ')[0];
@@ -255,7 +273,7 @@ export function App() {
     ]);
 
     setLogs(prev => [
-      ...prev.slice(-150),
+      ...prev.slice(-190),
       {
         id: Math.random().toString(36).slice(2, 9),
         timestamp: timeStr + '.10',
@@ -263,7 +281,7 @@ export function App() {
         level: 'HEAL',
         message: `Triggered '${strategy.name}'. Estimated downtime: ${strategy.expectedDowntime}.`,
       },
-    ]);
+    ].slice(-200));
   }, []);
 
   // Apply Recommended Recovery specifically
@@ -274,8 +292,21 @@ export function App() {
     handleApplyRecovery(strat);
   }, [activeScenarioId, handleApplyRecovery]);
 
+  // Clean stop for Auto Demo
+  const handleStopAutoDemo = useCallback(() => {
+    autoDemoTimeoutsRef.current.forEach(clearTimeout);
+    autoDemoTimeoutsRef.current = [];
+    setAutoDemoState(null);
+    setDemoToast('Auto demo stopped — use manual mode');
+    setTimeout(() => setDemoToast(null), 4000);
+  }, []);
+
   // Reset to Clean Baseline
   const handleReset = useCallback(() => {
+    if (autoDemoTimeoutsRef.current.length > 0) {
+      handleStopAutoDemo();
+    }
+
     setServices(createInitialServices());
     setActiveScenarioId(null);
     setRootCauseId(null);
@@ -283,13 +314,15 @@ export function App() {
     setCascadeSteps([]);
     setIsRecovering(false);
     setActiveRecoveryStrategy(null);
+    setSavedCountAtRecovery(0);
     setPostMortem(null);
+    setLogFilter('ALL'); // Reset filter back to ALL
 
     const now = new Date();
     const timeStr = now.toTimeString().split(' ')[0];
 
     setLogs(prev => [
-      ...prev.slice(-150),
+      ...prev.slice(-190),
       {
         id: Math.random().toString(36).slice(2, 9),
         timestamp: timeStr + '.00',
@@ -297,7 +330,114 @@ export function App() {
         level: 'INFO',
         message: 'Topology reset to initial healthy baseline. All services reporting nominal SLA.',
       },
-    ]);
+    ].slice(-200));
+  }, [handleStopAutoDemo]);
+
+  // Start Automated 60-Second Video Presentation Demo
+  const handleStartAutoDemo = useCallback(() => {
+    // 1. Clear any active timeouts and reset state
+    autoDemoTimeoutsRef.current.forEach(clearTimeout);
+    autoDemoTimeoutsRef.current = [];
+
+    setServices(createInitialServices());
+    setActiveScenarioId(null);
+    setRootCauseId(null);
+    setTimeToCrashSec(0);
+    setCascadeSteps([]);
+    setIsRecovering(false);
+    setActiveRecoveryStrategy(null);
+    setSavedCountAtRecovery(0);
+    setPostMortem(null);
+    setLogFilter('ALL');
+    setIsPlaying(true);
+    setDemoToast(null);
+
+    // Step 1: 0 - 10s: Healthy Baseline
+    setAutoDemoState({
+      step: 1,
+      caption: 'Healthy system — 8 services, low risk',
+      secRemaining: 70,
+    });
+
+    // Step 2: 10s - 25s: Auto-inject Payment Outage
+    const t2 = setTimeout(() => {
+      try {
+        handleTriggerScenario('payment_outage');
+        setAutoDemoState(prev => prev ? {
+          ...prev,
+          step: 2,
+          caption: 'Injecting Payment Outage — root cause: Payments',
+        } : null);
+      } catch {
+        handleStopAutoDemo();
+      }
+    }, 10000);
+
+    // Step 3: 25s - 40s: Show Cascade spreading to Orders & Gateway
+    const t3 = setTimeout(() => {
+      setAutoDemoState(prev => prev ? {
+        ...prev,
+        step: 3,
+        caption: 'Cascade spreading — blast radius growing',
+      } : null);
+    }, 25000);
+
+    // Step 4: 40s - 55s: Highlight Recommended Recovery & Countdown to Apply
+    const t4 = setTimeout(() => {
+      setAutoDemoState(prev => prev ? {
+        ...prev,
+        step: 4,
+        caption: 'Applying recommended recovery: Isolate & Reroute (auto-applying in 5s...)',
+      } : null);
+    }, 40000);
+
+    // Step 4b: 45s: Execute Recovery
+    const t4b = setTimeout(() => {
+      try {
+        const strat = RECOVERY_STRATEGIES.find(s => s.id === 'reroute') || RECOVERY_STRATEGIES[2];
+        handleApplyRecovery(strat);
+        setAutoDemoState(prev => prev ? {
+          ...prev,
+          caption: 'Applying recommended recovery: Isolate & Reroute',
+        } : null);
+      } catch {
+        handleStopAutoDemo();
+      }
+    }, 45000);
+
+    // Step 5: 55s - 70s: Post-mortem banner & healing verification
+    const t5 = setTimeout(() => {
+      setAutoDemoState(prev => prev ? {
+        ...prev,
+        step: 5,
+        caption: 'Crash prevented — system recovered',
+      } : null);
+    }, 55000);
+
+    // Finish: 70s: Return cleanly to manual mode
+    const tEnd = setTimeout(() => {
+      autoDemoTimeoutsRef.current = [];
+      setAutoDemoState(null);
+      setDemoToast('Auto demo complete — returned to manual mode');
+      setTimeout(() => setDemoToast(null), 4000);
+    }, 70000);
+
+    autoDemoTimeoutsRef.current = [t2, t3, t4, t4b, t5, tEnd];
+  }, [handleTriggerScenario, handleApplyRecovery, handleStopAutoDemo]);
+
+  const handleToggleAutoDemo = useCallback(() => {
+    if (autoDemoState) {
+      handleStopAutoDemo();
+    } else {
+      handleStartAutoDemo();
+    }
+  }, [autoDemoState, handleStopAutoDemo, handleStartAutoDemo]);
+
+  // Clean up timeouts on unmount
+  useEffect(() => {
+    return () => {
+      autoDemoTimeoutsRef.current.forEach(clearTimeout);
+    };
   }, []);
 
   // Main 2-Second Simulation Loop
@@ -315,6 +455,7 @@ export function App() {
         timeToCrashSec: curCountdown,
         incidentStartTime: curStartTime,
         cascadeSteps: curSteps,
+        savedCountAtRecovery: curSavedCount,
       } = stateRef.current;
 
       // Case A: System is currently recovering
@@ -329,13 +470,13 @@ export function App() {
           setTimeToCrashSec(0);
 
           const durationSec = curStartTime ? Math.round((Date.now() - curStartTime) / 1000) : 14;
-          const affectedCount = curServices.filter(s => s.risk > 30).length || 5;
+          const finalSaved = curSavedCount || curServices.filter(s => s.risk >= 35).length || 1;
 
           const stratTitle = stateRef.current.activeRecoveryStrategy?.name || 'Automated Traffic Shedding';
           setPostMortem({
-            message: `Crash prevented in ${durationSec}s — ${affectedCount} services saved`,
+            message: `Crash prevented in ${durationSec}s — ${finalSaved} services saved`,
             subtext: `Mitigated via ${stratTitle}. Automated remediation successfully restored 100% SLA compliance with zero permanent data loss recorded.`,
-            savedCount: affectedCount,
+            savedCount: finalSaved,
             durationSec,
           });
 
@@ -354,7 +495,7 @@ export function App() {
         }
 
         const newLogs = generateLogEntries(healedServices, curRootId, true);
-        setLogs(prev => [...prev.slice(-180), ...newLogs]);
+        setLogs(prev => [...prev.slice(-190), ...newLogs].slice(-200));
         return;
       }
 
@@ -369,7 +510,7 @@ export function App() {
         setServices(updated);
 
         // Detect newly affected services to add to timeline
-        const currentlyAffected = updated.filter(s => (s.status === 'at-risk' || s.status === 'failing') && !s.isRootCause);
+        const currentlyAffected = updated.filter(s => (s.status === 'at-risk' || s.status === 'failing') && s.id !== curRootId);
         const recordedIds = new Set(curSteps.map(step => step.serviceId));
 
         currentlyAffected.forEach(s => {
@@ -393,7 +534,7 @@ export function App() {
         });
 
         const newLogs = generateLogEntries(updated, curRootId, false);
-        setLogs(prev => [...prev.slice(-180), ...newLogs]);
+        setLogs(prev => [...prev.slice(-190), ...newLogs].slice(-200));
         return;
       }
 
@@ -402,7 +543,7 @@ export function App() {
       setServices(normalUpdated);
 
       const newLogs = generateLogEntries(normalUpdated, null, false);
-      setLogs(prev => [...prev.slice(-180), ...newLogs]);
+      setLogs(prev => [...prev.slice(-190), ...newLogs].slice(-200));
 
     }, 2000);
 
@@ -420,7 +561,7 @@ export function App() {
 
   return (
     <div className="app-container">
-      {/* Header with Title, Controls, Orcathon Track Badge */}
+      {/* Header with Title, Controls, Orcathon Track Badge, Auto Demo Button */}
       <Header
         tickCount={tickCount}
         elapsedSec={elapsedSec}
@@ -429,8 +570,48 @@ export function App() {
         onReset={handleReset}
         onOpenFormula={() => setIsFormulaOpen(true)}
         onOpenDemo={() => setIsDemoOpen(true)}
+        isAutoDemoRunning={Boolean(autoDemoState)}
+        onToggleAutoDemo={handleToggleAutoDemo}
         hasActiveIncident={hasActiveIncident}
       />
+
+      {/* Large On-Screen Step Caption Banner for Foolproof Video Recording */}
+      {autoDemoState && (
+        <div className="auto-demo-banner" role="status" aria-live="polite">
+          <div className="auto-demo-left">
+            <span className="auto-demo-step-badge">
+              <span className="sim-pill-dot" />
+              AUTO DEMO • STEP {autoDemoState.step} OF 5
+            </span>
+            <span className="auto-demo-caption">
+              {autoDemoState.caption}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn-stop-auto-demo"
+            onClick={handleStopAutoDemo}
+            aria-label="Stop automated demo"
+          >
+            ⏹ Stop Demo
+          </button>
+        </div>
+      )}
+
+      {/* Small Toast if Auto Demo was stopped cleanly */}
+      {demoToast && (
+        <div className="demo-toast-banner" role="status">
+          <span>{demoToast}</span>
+          <button
+            type="button"
+            onClick={() => setDemoToast(null)}
+            className="btn-close-toast"
+            aria-label="Dismiss message"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Post-Mortem Alert Banner when Incident is Mitigated */}
       {postMortem && (
@@ -447,6 +628,7 @@ export function App() {
             className="btn-close-pm"
             onClick={() => setPostMortem(null)}
             title="Dismiss Post-Mortem"
+            aria-label="Dismiss Post-Mortem"
           >
             ✕
           </button>
@@ -455,13 +637,14 @@ export function App() {
 
       {/* Main Dashboard Layout */}
       <main className="main-layout">
-        {/* Left Column: Service Graph & Recovery Strategy Comparison */}
+        {/* Left Column: Service Graph, Recovery Strategy Comparison, Risk Ranked Table */}
         <section className="left-col">
           {/* Feature 1: Live Service Graph & Scenarios */}
           <ServiceGraph
             services={services}
             scenarios={FAILURE_SCENARIOS}
             activeScenarioId={activeScenarioId}
+            rootCauseId={rootCauseId}
             onTriggerScenario={handleTriggerScenario}
             onInjectServiceFailure={handleInjectServiceFailure}
             onSelectService={id => setSelectedServiceId(id)}
@@ -475,6 +658,7 @@ export function App() {
             recommendedStrategyId={recommendedStrategyId}
             recommendationReason={recommendationReason}
             hasActiveIncident={hasActiveIncident}
+            blastRadius={blastRadius}
             isRecovering={isRecovering}
             onApplyRecovery={handleApplyRecovery}
           />
@@ -500,7 +684,11 @@ export function App() {
           />
 
           {/* Feature 2: Live Log Feed */}
-          <LogFeed logs={logs} />
+          <LogFeed
+            logs={logs}
+            filter={logFilter}
+            onFilterChange={setLogFilter}
+          />
         </section>
       </main>
 
