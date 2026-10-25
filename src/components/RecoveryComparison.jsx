@@ -5,9 +5,13 @@ export function RecoveryComparison({
   recommendedStrategyId,
   recommendationReason,
   hasActiveIncident,
+  blastRadius = 0,
   isRecovering,
   onApplyRecovery,
 }) {
+  const isCascadeActive = (blastRadius > 0 || hasActiveIncident);
+  const canApply = isCascadeActive && !isRecovering;
+
   return (
     <div className="dashboard-card recovery-section">
       <div className="recovery-header-bar">
@@ -45,6 +49,12 @@ export function RecoveryComparison({
               <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
             </svg>
             MITIGATION IN PROGRESS
+          </div>
+        )}
+
+        {!hasActiveIncident && !isRecovering && (
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+            Idle (Zero Cascade Active)
           </div>
         )}
       </div>
@@ -104,13 +114,18 @@ export function RecoveryComparison({
                 </div>
               )}
 
-              {/* Action Button */}
+              {/* Action Button: Disabled when no cascade active with explicit hint */}
               <button
                 type="button"
-                className={`btn-apply-recovery ${isRecommended ? 'primary-action' : ''}`}
-                onClick={() => onApplyRecovery(strat)}
-                disabled={isRecovering}
-                style={{ opacity: isRecovering ? 0.6 : 1 }}
+                className={`btn-apply-recovery ${isRecommended && canApply ? 'primary-action' : ''}`}
+                onClick={() => canApply && onApplyRecovery(strat)}
+                disabled={!canApply}
+                title={!isCascadeActive ? 'Inject a failure to compare recoveries' : 'Apply this recovery strategy'}
+                aria-label={!isCascadeActive ? 'Inject a failure to compare recoveries' : `Apply ${strat.name}`}
+                style={{
+                  opacity: canApply ? 1 : 0.45,
+                  cursor: canApply ? 'pointer' : 'not-allowed',
+                }}
               >
                 {isRecovering ? (
                   <>
@@ -120,6 +135,10 @@ export function RecoveryComparison({
                     </svg>
                     Executing Mitigation...
                   </>
+                ) : !isCascadeActive ? (
+                  <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                    Inject a failure to compare recoveries
+                  </span>
                 ) : (
                   <>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">

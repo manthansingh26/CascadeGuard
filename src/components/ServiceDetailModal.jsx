@@ -20,8 +20,8 @@ export function ServiceDetailModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 540 }}>
-        <div className="modal-header">
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 540, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="modal-header" style={{ position: 'sticky', top: 0, zIndex: 10, background: '#0f172a' }}>
           <div>
             <h3>{service.name}</h3>
             <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
@@ -32,12 +32,13 @@ export function ServiceDetailModal({
             type="button"
             className="btn-close-pm"
             onClick={onClose}
+            aria-label={`Close ${service.name} detail view`}
           >
             ✕
           </button>
         </div>
 
-        <div className="modal-body">
+        <div className="modal-body" style={{ overflowY: 'auto', flex: 1 }}>
           <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: 14 }}>
             {service.description}
           </p>

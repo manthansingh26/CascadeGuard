@@ -8,6 +8,8 @@ export function Header({
   onReset,
   onOpenFormula,
   onOpenDemo,
+  isAutoDemoRunning,
+  onToggleAutoDemo,
   hasActiveIncident,
 }) {
   return (
@@ -28,7 +30,7 @@ export function Header({
             </svg>
             Vercel Ready • ₹0 Cost • In-Browser Model
           </span>
-          <span>TICK: every 2.0s</span>
+          <span className="secondary-tick-pill">TICK: every 2.0s</span>
         </div>
       </div>
 
@@ -68,6 +70,7 @@ export function Header({
             className={`ctrl-btn ${isPlaying ? 'active' : ''}`}
             onClick={onTogglePlay}
             title={isPlaying ? 'Pause Simulation Ticks' : 'Resume Simulation Ticks'}
+            aria-label={isPlaying ? 'Pause Simulation Ticks' : 'Resume Simulation Ticks'}
           >
             {isPlaying ? (
               <>
@@ -92,6 +95,7 @@ export function Header({
             className="ctrl-btn ctrl-btn-danger"
             onClick={onReset}
             title="Reset topology to healthy baseline"
+            aria-label="Reset topology to healthy baseline"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
@@ -103,11 +107,37 @@ export function Header({
 
         {/* Right Action Tools */}
         <div className="header-right-actions">
+          {/* Foolproof Auto Demo (60s) Button for Video Recording */}
+          <button
+            type="button"
+            className={`btn-auto-demo ${isAutoDemoRunning ? 'running' : ''}`}
+            onClick={onToggleAutoDemo}
+            title={isAutoDemoRunning ? 'Stop automated 60s demo recording' : 'Start automated 60-second video demo walkthrough'}
+            aria-label={isAutoDemoRunning ? 'Stop Auto Demo' : 'Start Auto Demo (60s)'}
+          >
+            {isAutoDemoRunning ? (
+              <>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="4" y="4" width="16" height="16" rx="2" />
+                </svg>
+                Stop Demo
+              </>
+            ) : (
+              <>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                Auto Demo (60s)
+              </>
+            )}
+          </button>
+
           <button
             type="button"
             className="btn-formula"
             onClick={onOpenFormula}
             title="View heuristic prediction formula"
+            aria-label="View how risk is calculated"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 5, verticalAlign: -1 }}>
               <circle cx="12" cy="12" r="10" />
@@ -122,11 +152,12 @@ export function Header({
             className="btn-demo-script"
             onClick={onOpenDemo}
             title="Open 60-Second Presentation Demo Guide"
+            aria-label="Open 60-second demo script guide"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <polygon points="5 3 19 12 5 21 5 3" />
             </svg>
-            60s Demo Script
+            Demo Guide
           </button>
         </div>
       </header>

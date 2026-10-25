@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 
-export function LogFeed({ logs }) {
-  const [filter, setFilter] = useState('ALL');
-  const [autoScroll, setAutoScroll] = useState(true);
+export function LogFeed({
+  logs,
+  filter = 'ALL',
+  onFilterChange,
+}) {
+  const [autoScroll, setAutoScroll] = React.useState(true);
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -10,6 +13,11 @@ export function LogFeed({ logs }) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [logs, autoScroll]);
+
+  const critCount = logs.filter(log => log.level === 'CRIT').length;
+  const warnCount = logs.filter(log => log.level === 'WARN').length;
+  const healCount = logs.filter(log => log.level === 'HEAL').length;
+  const allCount = logs.length;
 
   const filteredLogs = logs.filter(log => {
     if (filter === 'ALL') return true;
@@ -30,7 +38,7 @@ export function LogFeed({ logs }) {
             </svg>
             Live Server Telemetry Feed
           </span>
-          <span className="card-subtitle">{logs.length} events logged</span>
+          <span className="card-subtitle">{allCount} events in buffer (max 200)</span>
         </div>
       </div>
 
@@ -40,30 +48,34 @@ export function LogFeed({ logs }) {
           <button
             type="button"
             className={`filter-pill ${filter === 'ALL' ? 'active' : ''}`}
-            onClick={() => setFilter('ALL')}
+            onClick={() => onFilterChange('ALL')}
+            aria-label="Filter all logs"
           >
-            ALL
+            ALL ({allCount})
           </button>
           <button
             type="button"
             className={`filter-pill ${filter === 'CRIT' ? 'active' : ''}`}
-            onClick={() => setFilter('CRIT')}
+            onClick={() => onFilterChange('CRIT')}
+            aria-label="Filter critical error logs"
           >
-            CRIT
+            CRIT ({critCount})
           </button>
           <button
             type="button"
             className={`filter-pill ${filter === 'WARN' ? 'active' : ''}`}
-            onClick={() => setFilter('WARN')}
+            onClick={() => onFilterChange('WARN')}
+            aria-label="Filter warning logs"
           >
-            WARN
+            WARN ({warnCount})
           </button>
           <button
             type="button"
             className={`filter-pill ${filter === 'HEAL' ? 'active' : ''}`}
-            onClick={() => setFilter('HEAL')}
+            onClick={() => onFilterChange('HEAL')}
+            aria-label="Filter healing recovery logs"
           >
-            HEAL
+            HEAL ({healCount})
           </button>
         </div>
 
@@ -72,16 +84,17 @@ export function LogFeed({ logs }) {
           className="filter-pill"
           onClick={() => setAutoScroll(!autoScroll)}
           style={{ opacity: autoScroll ? 1 : 0.6 }}
+          aria-label="Toggle auto-scroll"
         >
           {autoScroll ? 'Auto-scroll: ON' : 'Auto-scroll: PAUSED'}
         </button>
       </div>
 
-      {/* Scrolling Monospace Terminal */}
+      {/* Scrolling Monospace Terminal with word-wrap and zero horizontal clipping */}
       <div className="log-scroll-area" ref={scrollRef}>
         {filteredLogs.length === 0 ? (
-          <div style={{ color: '#64748b', fontStyle: 'italic', padding: '10px 0' }}>
-            No logs matching filter {filter}.
+          <div style={{ color: '#64748b', fontStyle: 'italic', padding: '14px 4px', fontSize: '0.75rem' }}>
+            No {filter} logs yet in this run ({allCount} total events recorded).
           </div>
         ) : (
           filteredLogs.map(log => {

@@ -4,6 +4,7 @@ export function ServiceGraph({
   services,
   scenarios,
   activeScenarioId,
+  rootCauseId,
   onTriggerScenario,
   onInjectServiceFailure,
   onSelectService,
@@ -43,6 +44,17 @@ export function ServiceGraph({
     }
   };
 
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case 'failing': return 'FAILING';
+      case 'at-risk': return 'AT-RISK';
+      case 'recovering': return 'RECOVERING';
+      case 'healthy':
+      default:
+        return 'HEALTHY';
+    }
+  };
+
   return (
     <div className="dashboard-card">
       <div className="card-header">
@@ -79,6 +91,7 @@ export function ServiceGraph({
                 className={`scenario-btn ${isActive ? 'active' : ''}`}
                 onClick={() => onTriggerScenario(sc.id)}
                 title={sc.description}
+                aria-label={`Trigger scenario: ${sc.title}`}
               >
                 <span>⚡</span>
                 {sc.title}
@@ -90,10 +103,11 @@ export function ServiceGraph({
 
       {/* SVG Canvas */}
       <div className="service-graph-wrapper">
+        {/* Comprehensive Graph Legend */}
         <div className="graph-legend">
           <div className="legend-item">
             <span className="legend-dot green" />
-            <span>Healthy (&lt; 35% Risk)</span>
+            <span>Healthy (&lt; 35%)</span>
           </div>
           <div className="legend-item">
             <span className="legend-dot amber" />
@@ -107,9 +121,18 @@ export function ServiceGraph({
             <span className="legend-dot cyan" />
             <span>Recovering</span>
           </div>
+          <div style={{ height: 1, background: 'var(--border-subtle)', margin: '4px 0' }} />
+          <div className="legend-item">
+            <span style={{ width: 14, height: 2, background: 'rgba(255,255,255,0.4)', display: 'inline-block' }} />
+            <span>Solid arrow: depends on</span>
+          </div>
+          <div className="legend-item">
+            <span style={{ width: 14, height: 2, borderTop: '2px dashed #ef4444', display: 'inline-block' }} />
+            <span>Dashed red: cascade travel</span>
+          </div>
         </div>
 
-        <svg viewBox="0 0 920 540" className="graph-svg">
+        <svg viewBox="0 0 920 570" className="graph-svg">
           <defs>
             {/* Arrowhead marker for normal dependency links */}
             <marker
@@ -121,7 +144,7 @@ export function ServiceGraph({
               markerHeight="6"
               orient="auto-start-reverse"
             >
-              <path d="M 0 1 L 9 5 L 0 9 z" fill="rgba(255, 255, 255, 0.35)" />
+              <path d="M 0 1 L 9 5 L 0 9 z" fill="rgba(255, 255, 255, 0.45)" />
             </marker>
 
             {/* Arrowhead marker for cascading failure links */}
@@ -151,196 +174,299 @@ export function ServiceGraph({
             </marker>
           </defs>
 
-          {/* Render dependency edges */}
-          {edges.map(edge => {
-            const startX = edge.from.x;
-            const startY = edge.from.y + 35;
-            const endX = edge.to.x;
-            const endY = edge.to.y - 35;
+          {/* Layer 1: Edges rendered BEHIND nodes */}
+          <g className="edges-layer">
+            {edges.map(edge => {
+              const startX = edge.from.x;
+              const startY = edge.from.y + 49;
+              const endX = edge.to.x;
+              const endY = edge.to.y - 49;
 
-            // Smooth cubic Bezier curve
-            const midY = (startY + endY) / 2;
-            const pathD = `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`;
+              // Smooth cubic Bezier curve
+              const midY = (startY + endY) / 2;
+              const pathD = `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`;
 
-            let marker = 'url(#arrow-default)';
-            let linkClass = 'dep-link';
+              let marker = 'url(#arrow-default)';
+              let linkClass = 'dep-link';
 
-            if (edge.isRecoveringActive) {
-              marker = 'url(#arrow-recovering)';
-              linkClass += ' recovering-active';
-            } else if (edge.isCascadeActive) {
-              marker = 'url(#arrow-cascade)';
-              linkClass += ' cascade-active';
-            }
+              if (edge.isRecoveringActive) {
+                marker = 'url(#arrow-recovering)';
+                linkClass += ' recovering-active';
+              } else if (edge.isCascadeActive) {
+                marker = 'url(#arrow-cascade)';
+                linkClass += ' cascade-active';
+              }
 
-            return (
-              <path
-                key={edge.id}
-                d={pathD}
-                className={linkClass}
-                markerEnd={marker}
-              />
-            );
-          })}
-
-          {/* Render 8 Service Nodes */}
-          {services.map(s => {
-            const nodeW = 168;
-            const nodeH = 76;
-            const cornerX = s.x - nodeW / 2;
-            const cornerY = s.y - nodeH / 2;
-            const statusColor = getStatusColor(s.status);
-            const isSelected = selectedServiceId === s.id;
-
-            return (
-              <g
-                key={s.id}
-                className="node-group"
-                onClick={() => onSelectService(s.id)}
-              >
-                {/* Node Box */}
-                <rect
-                  x={cornerX}
-                  y={cornerY}
-                  width={nodeW}
-                  height={nodeH}
-                  className={`node-box ${s.status} ${s.isRootCause ? 'root-cause' : ''}`}
-                  style={{
-                    stroke: isSelected ? '#ffffff' : undefined,
-                    strokeWidth: isSelected ? 2.5 : undefined,
-                  }}
+              return (
+                <path
+                  key={edge.id}
+                  d={pathD}
+                  className={linkClass}
+                  markerEnd={marker}
                 />
+              );
+            })}
+          </g>
 
-                {/* Left vertical health status strip */}
-                <rect
-                  x={cornerX}
-                  y={cornerY}
-                  width={4}
-                  height={nodeH}
-                  rx="2"
-                  fill={statusColor}
-                />
+          {/* Layer 2: Render 8 Service Nodes with Solid Backgrounds */}
+          <g className="nodes-layer">
+            {services.map(s => {
+              const nodeW = 180;
+              const nodeH = 98;
+              const cornerX = s.x - nodeW / 2;
+              const cornerY = s.y - nodeH / 2;
+              const statusColor = getStatusColor(s.status);
+              const statusLabel = getStatusLabel(s.status);
+              const isSelected = selectedServiceId === s.id;
+              const isRoot = Boolean(rootCauseId && s.id === rootCauseId);
+              const isCascadeFailing = !isRoot && s.status === 'failing';
+              const isCascadeAtRisk = !isRoot && s.status === 'at-risk';
+              const isRecoveringNode = s.status === 'recovering';
 
-                {/* Root Cause Banner if active */}
-                {s.isRootCause && (
-                  <g>
-                    <rect
-                      x={cornerX + 8}
-                      y={cornerY - 10}
-                      width={86}
-                      height={16}
-                      rx="3"
-                      fill="#ef4444"
-                    />
-                    <text
-                      x={cornerX + 51}
-                      y={cornerY + 2}
-                      textAnchor="middle"
-                      fill="#ffffff"
-                      fontSize="9"
-                      fontWeight="700"
-                      fontFamily="var(--font-mono)"
-                    >
-                      ROOT CAUSE
-                    </text>
-                  </g>
-                )}
-
-                {/* Service Name */}
-                <text
-                  x={cornerX + 12}
-                  y={cornerY + 20}
-                  fill="#ffffff"
-                  fontSize="12"
-                  fontWeight="700"
-                  fontFamily="var(--font-sans)"
-                >
-                  {s.name}
-                </text>
-
-                {/* Tier Subtitle */}
-                <text
-                  x={cornerX + 12}
-                  y={cornerY + 34}
-                  fill="#94a3b8"
-                  fontSize="9.5"
-                  fontFamily="var(--font-mono)"
-                >
-                  {s.tier}
-                </text>
-
-                {/* Risk score badge on right */}
-                <rect
-                  x={cornerX + nodeW - 46}
-                  y={cornerY + 10}
-                  width={38}
-                  height={18}
-                  rx="4"
-                  fill={
-                    s.status === 'failing' ? 'rgba(239, 68, 68, 0.3)' :
-                    s.status === 'at-risk' ? 'rgba(245, 158, 11, 0.3)' :
-                    s.status === 'recovering' ? 'rgba(6, 182, 212, 0.3)' :
-                    'rgba(16, 185, 129, 0.2)'
-                  }
-                  stroke={statusColor}
-                  strokeWidth="1"
-                />
-                <text
-                  x={cornerX + nodeW - 27}
-                  y={cornerY + 23}
-                  textAnchor="middle"
-                  fill={statusColor}
-                  fontSize="10"
-                  fontWeight="800"
-                  fontFamily="var(--font-mono)"
-                >
-                  {s.risk}%
-                </text>
-
-                {/* Mini Metrics: Latency, Error, CPU */}
-                <text
-                  x={cornerX + 12}
-                  y={cornerY + 52}
-                  fill="#cbd5e1"
-                  fontSize="9"
-                  fontFamily="var(--font-mono)"
-                >
-                  {s.latency}ms • {s.errorRate}% err • {s.cpu}% cpu
-                </text>
-
-                {/* Inline Quick Failure Injection Button */}
+              return (
                 <g
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onInjectServiceFailure(s.id);
-                  }}
-                  style={{ cursor: 'pointer' }}
+                  key={s.id}
+                  className="node-group"
+                  onClick={() => onSelectService(s.id)}
                 >
+                  {/* Solid Opaque Node Box */}
+                  <rect
+                    x={cornerX}
+                    y={cornerY}
+                    width={nodeW}
+                    height={nodeH}
+                    className={`node-box ${s.status} ${isRoot ? 'root-cause' : ''}`}
+                    style={{
+                      fill: '#0e1628',
+                      stroke: isSelected ? '#ffffff' : undefined,
+                      strokeWidth: isSelected ? 2.5 : undefined,
+                    }}
+                  />
+
+                  {/* Left vertical health status strip */}
+                  <rect
+                    x={cornerX}
+                    y={cornerY}
+                    width={4}
+                    height={nodeH}
+                    rx="2"
+                    fill={statusColor}
+                  />
+
+                  {/* Badge above card: Single ROOT CAUSE vs CASCADE vs AFFECTED */}
+                  {isRoot && (
+                    <g>
+                      <rect
+                        x={cornerX + 10}
+                        y={cornerY - 11}
+                        width={86}
+                        height={16}
+                        rx="3"
+                        fill="#ef4444"
+                      />
+                      <text
+                        x={cornerX + 53}
+                        y={cornerY + 1}
+                        textAnchor="middle"
+                        fill="#ffffff"
+                        fontSize="8.5"
+                        fontWeight="800"
+                        fontFamily="var(--font-mono)"
+                      >
+                        ROOT CAUSE
+                      </text>
+                    </g>
+                  )}
+
+                  {isCascadeFailing && (
+                    <g>
+                      <rect
+                        x={cornerX + 10}
+                        y={cornerY - 11}
+                        width={68}
+                        height={16}
+                        rx="3"
+                        fill="#dc2626"
+                      />
+                      <text
+                        x={cornerX + 44}
+                        y={cornerY + 1}
+                        textAnchor="middle"
+                        fill="#ffffff"
+                        fontSize="8.5"
+                        fontWeight="800"
+                        fontFamily="var(--font-mono)"
+                      >
+                        CASCADE
+                      </text>
+                    </g>
+                  )}
+
+                  {isCascadeAtRisk && (
+                    <g>
+                      <rect
+                        x={cornerX + 10}
+                        y={cornerY - 11}
+                        width={72}
+                        height={16}
+                        rx="3"
+                        fill="#d97706"
+                      />
+                      <text
+                        x={cornerX + 46}
+                        y={cornerY + 1}
+                        textAnchor="middle"
+                        fill="#ffffff"
+                        fontSize="8.5"
+                        fontWeight="800"
+                        fontFamily="var(--font-mono)"
+                      >
+                        AFFECTED
+                      </text>
+                    </g>
+                  )}
+
+                  {isRecoveringNode && (
+                    <g>
+                      <rect
+                        x={cornerX + 10}
+                        y={cornerY - 11}
+                        width={82}
+                        height={16}
+                        rx="3"
+                        fill="#0891b2"
+                      />
+                      <text
+                        x={cornerX + 51}
+                        y={cornerY + 1}
+                        textAnchor="middle"
+                        fill="#ffffff"
+                        fontSize="8.5"
+                        fontWeight="800"
+                        fontFamily="var(--font-mono)"
+                      >
+                        RECOVERING
+                      </text>
+                    </g>
+                  )}
+
+                  {/* Row 1: Service Name & Risk Score Badge */}
+                  <text
+                    x={cornerX + 12}
+                    y={cornerY + 20}
+                    fill="#ffffff"
+                    fontSize="12"
+                    fontWeight="700"
+                    fontFamily="var(--font-sans)"
+                  >
+                    {s.name}
+                  </text>
+
+                  {/* Risk Badge on Top Right */}
                   <rect
                     x={cornerX + nodeW - 46}
-                    y={cornerY + 44}
-                    width={38}
+                    y={cornerY + 8}
+                    width={36}
                     height={18}
-                    rx="3"
-                    fill="rgba(239, 68, 68, 0.18)"
-                    stroke="rgba(239, 68, 68, 0.5)"
+                    rx="4"
+                    fill={
+                      s.status === 'failing' ? 'rgba(239, 68, 68, 0.25)' :
+                      s.status === 'at-risk' ? 'rgba(245, 158, 11, 0.25)' :
+                      s.status === 'recovering' ? 'rgba(6, 182, 212, 0.25)' :
+                      'rgba(16, 185, 129, 0.18)'
+                    }
+                    stroke={statusColor}
                     strokeWidth="1"
                   />
                   <text
-                    x={cornerX + nodeW - 27}
-                    y={cornerY + 56}
+                    x={cornerX + nodeW - 28}
+                    y={cornerY + 21}
                     textAnchor="middle"
-                    fill="#fca5a5"
-                    fontSize="8.5"
+                    fill={statusColor}
+                    fontSize="10"
+                    fontWeight="800"
+                    fontFamily="var(--font-mono)"
+                  >
+                    {s.risk}%
+                  </text>
+
+                  {/* Row 2: Tier Subtitle (Left) & Explicit Health Label (Right) */}
+                  <text
+                    x={cornerX + 12}
+                    y={cornerY + 34}
+                    fill="#94a3b8"
+                    fontSize="9.5"
+                    fontFamily="var(--font-mono)"
+                  >
+                    {s.tier}
+                  </text>
+                  <text
+                    x={cornerX + nodeW - 12}
+                    y={cornerY + 34}
+                    textAnchor="end"
+                    fill={statusColor}
+                    fontSize="8"
                     fontWeight="700"
                     fontFamily="var(--font-mono)"
                   >
-                    FAIL
+                    {statusLabel}
                   </text>
+
+                  {/* Row 3: Dedicated Clean Metrics Line (Never Overlapped) */}
+                  <text
+                    x={cornerX + 12}
+                    y={cornerY + 52}
+                    fill="#cbd5e1"
+                    fontSize="9"
+                    fontFamily="var(--font-mono)"
+                  >
+                    {s.latency}ms • {s.errorRate}% err • {s.cpu}% cpu
+                  </text>
+
+                  {/* Row 4: Dedicated Full-Width Inject Fail Button */}
+                  <g
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Inject failure on ${s.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onInjectServiceFailure(s.id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onInjectServiceFailure(s.id);
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <rect
+                      x={cornerX + 10}
+                      y={cornerY + 64}
+                      width={nodeW - 20}
+                      height={24}
+                      rx="4"
+                      fill="rgba(239, 68, 68, 0.18)"
+                      stroke="rgba(239, 68, 68, 0.55)"
+                      strokeWidth="1"
+                    />
+                    <text
+                      x={cornerX + nodeW / 2}
+                      y={cornerY + 79}
+                      textAnchor="middle"
+                      fill="#fca5a5"
+                      fontSize="9.5"
+                      fontWeight="700"
+                      fontFamily="var(--font-mono)"
+                    >
+                      ⚡ INJECT FAIL
+                    </text>
+                  </g>
                 </g>
-              </g>
-            );
-          })}
+              );
+            })}
+          </g>
         </svg>
       </div>
     </div>
